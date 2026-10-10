@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+  # Pruebas de extremo a extremo a mano: necesitan las imágenes publicadas en ghcr
+  workflow_dispatch:
+
+jobs:
+  compose:
+    # El docker-compose es válido con la configuración de ejemplo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp .env.example .env
+      - run: docker compose config --quiet
+      - run: docker compose -f docker-compose.yml -f docker-compose.build.yml config --quiet --no-interpolate
+
+  e2e:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: cp .env.example .env
+      - name: Clave de OpenRouter (opcional; sin ella se saltan las pruebas que usan la IA)
+        run: echo "OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}" >> .env
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - run: docker compose up -d --wait
+      - run: uv sync --group dev
+      - run: uv run pytest -m integration -rs
+      - if: failure()
+        run: docker compose logs
