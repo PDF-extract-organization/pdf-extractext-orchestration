@@ -1,0 +1,135 @@
+# Stack completo de pdf-extractext: Traefik delante de los cinco microservicios.
+#
+# Solo Traefik publica puertos al host. Todo se prueba entrando por http://pdf.localhost.
+# Las imágenes salen de ghcr (las publica la CI de cada repositorio al integrar en main).
+# Para construirlas desde los repos clonados al lado de este, ver docker-compose.build.yml.
+
+x-service: &service
+  restart: unless-stopped
+  networks:
+    - pdf-extractext
+
+services:
+  traefik:
+    <<: *service
+    image: traefik:v3.6
+    command:
+      - --providers.docker=true
+      # Solo se enrutan los contenedores con traefik.enable=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=pdf-extractext
+      - --entrypoints.web.address=:80
+      # Panel en :8080 sin autenticación: solo para desarrollo local
+      - --api.dashboard=true
+      - --api.insecure=true
+    ports:
+      - "80:80"
+      - "8080:8080"
+    volumes:
+      # Decisión consciente: el socket da a Traefik acceso al demonio de Docker.
+      # Va en solo lectura y es lo habitual en local. No usar así en producción.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  mongodb:
+    <<: *service
+    image: mongo:7
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?Falta MONGO_ROOT_USERNAME en .env}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?Falta MONGO_ROOT_PASSWORD en .env}
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  extractor:
+    <<: *service
+    image: ghcr.io/pdf-extract-organization/pdf-extractext-extractor:${TAG:-latest}
+    environment:
+      MAX_FILE_SIZE_MB: ${MAX_FILE_SIZE_MB:-10}
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.extractor.rule=Host(`${APP_HOST:-pdf.localhost}`) && PathPrefix(`/extractor`)
+      - traefik.http.routers.extractor.entrypoints=web
+      - traefik.http.routers.extractor.middlewares=extractor-strip
+      - traefik.http.middlewares.extractor-strip.stripprefix.prefixes=/extractor
+      - traefik.http.services.extractor.loadbalancer.server.port=8000
+
+  summarizer:
+    <<: *service
+    image: ghcr.io/pdf-extract-organization/pdf-extractext-summarizer:${TAG:-latest}
+    environment:
+      # La API key solo llega a este contenedor
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openrouter/free}
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.summarizer.rule=Host(`${APP_HOST:-pdf.localhost}`) && PathPrefix(`/summarizer`)
+      - traefik.http.routers.summarizer.entrypoints=web
+      - traefik.http.routers.summarizer.middlewares=summarizer-strip
+      - traefik.http.middlewares.summarizer-strip.stripprefix.prefixes=/summarizer
+      - traefik.http.services.summarizer.loadbalancer.server.port=8000
+
+  summaries:
+    <<: *service
+    image: ghcr.io/pdf-extract-organization/pdf-extractext-summaries:${TAG:-latest}
+    environment:
+      MONGODB_URL: mongodb://${MONGO_ROOT_USERNAME}:${MONGO_ROOT_PASSWORD}@mongodb:27017/?authSource=admin
+      MONGODB_DB_NAME: pdf_extractext
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.summaries.rule=Host(`${APP_HOST:-pdf.localhost}`) && PathPrefix(`/summaries`)
+      - traefik.http.routers.summaries.entrypoints=web
+      - traefik.http.routers.summaries.middlewares=summaries-strip
+      - traefik.http.middlewares.summaries-strip.stripprefix.prefixes=/summaries
+      - traefik.http.services.summaries.loadbalancer.server.port=8000
+
+  exporter:
+    <<: *service
+    image: ghcr.io/pdf-extract-organization/pdf-extractext-exporter:${TAG:-latest}
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.exporter.rule=Host(`${APP_HOST:-pdf.localhost}`) && PathPrefix(`/exporter`)
+      - traefik.http.routers.exporter.entrypoints=web
+      - traefik.http.routers.exporter.middlewares=exporter-strip
+      - traefik.http.middlewares.exporter-strip.stripprefix.prefixes=/exporter
+      - traefik.http.services.exporter.loadbalancer.server.port=8000
+
+  web:
+    <<: *service
+    image: ghcr.io/pdf-extract-organization/pdf-extractext-web:${TAG:-latest}
+    environment:
+      EXTRACTOR_URL: http://extractor:8000
+      SUMMARIZER_URL: http://summarizer:8000
+      SUMMARIES_URL: http://summaries:8000
+      EXPORTER_URL: http://exporter:8000
+    depends_on:
+      extractor:
+        condition: service_healthy
+      summarizer:
+        condition: service_healthy
+      summaries:
+        condition: service_healthy
+      exporter:
+        condition: service_healthy
+    labels:
+      - traefik.enable=true
+      # Todo lo que no sea de otro servicio va a web, sin quitar prefijo.
+      # Prioridad mínima para que "/" no se coma los prefijos de los demás.
+      - traefik.http.routers.web.rule=Host(`${APP_HOST:-pdf.localhost}`)
+      - traefik.http.routers.web.priority=1
+      - traefik.http.routers.web.entrypoints=web
+      - traefik.http.services.web.loadbalancer.server.port=8000
+
+volumes:
+  mongo_data:
+
+networks:
+  pdf-extractext:
+    name: pdf-extractext

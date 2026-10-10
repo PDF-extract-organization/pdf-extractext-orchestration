@@ -1,0 +1,42 @@
+# Desarrollo: construye las imágenes desde los repos clonados al lado de este, en vez
+# de descargarlas de ghcr, y monta el código de web para ver cambios sin reconstruir.
+#
+#   ProyectoDesarrollo/
+#   ├── pdf-extractext-orchestration/   ← este repo
+#   ├── pdf-extractext-extractor/
+#   ├── pdf-extractext-summarizer/
+#   ├── pdf-extractext-summaries/
+#   ├── pdf-extractext-exporter/
+#   └── pdf-extractext-web/
+#
+# Uso:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+
+services:
+  extractor:
+    build: ../pdf-extractext-extractor
+    image: pdf-extractext-extractor:dev
+
+  summarizer:
+    build: ../pdf-extractext-summarizer
+    image: pdf-extractext-summarizer:dev
+
+  summaries:
+    build: ../pdf-extractext-summaries
+    image: pdf-extractext-summaries:dev
+
+  exporter:
+    build: ../pdf-extractext-exporter
+    image: pdf-extractext-exporter:dev
+
+  web:
+    build: ../pdf-extractext-web
+    image: pdf-extractext-web:dev
+    # La plantilla se lee en cada petición: un cambio en index.html se ve al recargar.
+    # El código Python se recarga solo (con sondeo, porque en Windows los eventos de
+    # archivos no atraviesan el montaje). El CSS de Tailwind sí exige reconstruir.
+    volumes:
+      - ../pdf-extractext-web/app:/app/app:ro
+    environment:
+      WATCHFILES_FORCE_POLLING: "true"
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
