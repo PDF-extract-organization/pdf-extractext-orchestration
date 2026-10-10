@@ -1,0 +1,25 @@
+[project]
+name = "pdf-extractext-orchestration"
+version = "0.1.0"
+description = "Pruebas de extremo a extremo de pdf-extractext a través de Traefik"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "httpx>=0.24.0",
+    "python-docx>=1.2.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["e2e"]
+# Sin el stack levantado, la fixture `client` las salta: `uv run pytest` sigue en verde
+markers = [
+    "integration: requiere el stack levantado con docker compose",
+    "requires_ai: además necesita OPENROUTER_API_KEY y acceso a OpenRouter",
+]
