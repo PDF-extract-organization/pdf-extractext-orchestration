@@ -150,7 +150,7 @@ Ver `.env.example`.
 | Variable | Obligatoria | Uso |
 |---|---|---|
 | `MONGO_ROOT_USERNAME`, `MONGO_ROOT_PASSWORD` | Sí | Credenciales de MongoDB. La contraseña va dentro de una URL: evita `@ : / ? # %` y los caracteres no ASCII |
-| `OPENROUTER_API_KEY` | No | Sin ella no se generan resúmenes |
+| `OPENROUTER_API_KEY` | Sí | Sin ella no se generan resúmenes |
 | `OPENROUTER_MODEL` | No | Por defecto `openrouter/free` |
 | `TAG` | No | Versión de las imágenes de ghcr. Por defecto `latest` |
 | `APP_HOST` | No | Dominio de Traefik. Por defecto `pdf.localhost` |
