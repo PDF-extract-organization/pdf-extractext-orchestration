@@ -19,6 +19,7 @@ from docx import Document
 TRAEFIK_URL = os.environ.get("TRAEFIK_URL", "http://localhost")
 APP_HOST = os.environ.get("APP_HOST", "pdf.localhost")
 TRAEFIK_API_URL = os.environ.get("TRAEFIK_API_URL", "http://localhost:8080")
+CONSUL_HOST = os.environ.get("CONSUL_HOST", "consul.localhost")
 
 # El resumen espera a la IA: más que el timeout del summarizer (60 s)
 TIMEOUT_SECONDS = 120

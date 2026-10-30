@@ -2,23 +2,23 @@
 
 Orquestación de [pdf-extractext](https://github.com/PDF-extract-organization/pdf-extractext)
 dividido en microservicios (épica: pdf-extractext#64): el `docker-compose` con Traefik
-delante de los cinco servicios, y las pruebas de extremo a extremo que entran por
-Traefik.
+delante de los cinco servicios y de Consul, y las pruebas de extremo a extremo que entran
+por Traefik.
 
 Aquí no hay código de ningún servicio: cada uno vive en su repositorio.
 
 ## Arquitectura
 
 ```
-                       http://pdf.localhost
-                               │
-                           Traefik :80          (panel en :8080)
-         ┌──────────┬──────────┼──────────┬───────────────┐
-   /extractor  /summarizer  /summaries  /exporter   / y /api (el resto)
-         │          │          │          │               │
+                       http://pdf.localhost                    http://consul.localhost
+                               │                                         │
+                           Traefik :80          (panel en :8080) ────────┤
+         ┌──────────┬──────────┼──────────┬───────────────┐              │
+   /extractor  /summarizer  /summaries  /exporter   / y /api (el resto)  │
+         │          │          │          │               │              │
      extractor  summarizer  summaries  exporter          web ──► los cuatro
-                    │          │
-                OpenRouter   MongoDB
+                    │          │                                       Consul
+                OpenRouter   MongoDB                               (KV de configuración)
 ```
 
 | Servicio | Repositorio | Ruta en Traefik | Qué hace |
@@ -28,6 +28,12 @@ Aquí no hay código de ningún servicio: cada uno vive en su repositorio.
 | summarizer | [pdf-extractext-summarizer](https://github.com/PDF-extract-organization/pdf-extractext-summarizer) | `/summarizer` | Texto → resumen con IA |
 | summaries | [pdf-extractext-summaries](https://github.com/PDF-extract-organization/pdf-extractext-summaries) | `/summaries` | Historial en MongoDB |
 | exporter | [pdf-extractext-exporter](https://github.com/PDF-extract-organization/pdf-extractext-exporter) | `/exporter` | Markdown → `.docx` |
+| consul | imagen oficial `hashicorp/consul` | host `consul.localhost` | Configuración centralizada en su KV (épica: pdf-extractext#74) |
+
+Consul es un único servidor (`-server -bootstrap-expect=1`) que se elige líder a sí
+mismo: sin líder, el KV no responde. Va por host y no por prefijo porque su interfaz pide
+rutas absolutas (`/ui`, `/v1`). Los servicios le hablan por la red interna
+(`http://consul:8500`).
 
 Traefik quita el prefijo antes de reenviar (`/extractor/health` llega al servicio como
 `/health`), así que ningún servicio sabe que existe Traefik. Las reglas viven en las
@@ -54,6 +60,7 @@ docker compose up -d --wait
 | http://pdf.localhost/api/health | Estado de los cuatro servicios |
 | http://pdf.localhost/extractor/health (y `/summarizer`, `/summaries`, `/exporter`) | Cada servicio por su prefijo |
 | http://localhost:8080 | Panel de Traefik con las rutas detectadas |
+| http://consul.localhost | Interfaz de Consul (Key/Value para ver y editar la configuración) |
 
 Los navegadores y `curl` resuelven `*.localhost` a tu propia máquina sin configurar
 nada. Otros programas (por ejemplo Python en Windows) no: envíales la petición a
@@ -98,8 +105,8 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build -
 
 ## Seguridad
 
-- **Solo Traefik publica puertos** al host (80 y 8080). Ni los servicios ni MongoDB
-  son accesibles desde fuera de la red de Docker.
+- **Solo Traefik publica puertos** al host (80 y 8080). Ni los servicios, ni MongoDB,
+  ni Consul son accesibles desde fuera de la red de Docker.
 - **MongoDB arranca con autenticación** (`MONGO_ROOT_USERNAME` y `MONGO_ROOT_PASSWORD`).
   Solo `summaries` recibe las credenciales.
 - **La API key de OpenRouter** solo llega al contenedor `summarizer`.
@@ -107,13 +114,17 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build -
   servicios por sus etiquetas. Es una decisión consciente y habitual en local, pero da a
   Traefik acceso al demonio de Docker: no usar así en producción.
 - **El panel de Traefik** (`:8080`) va sin autenticación. Solo para desarrollo.
+- **Consul** va sin ACL: cualquiera que llegue a `consul.localhost` puede leer y cambiar
+  el KV. Solo para desarrollo. Por eso **el KV no guarda secretos**: las API keys siguen
+  en el `.env` o en el navegador de cada usuario.
 
 ## Pruebas de extremo a extremo
 
 En `e2e/`. Todas entran por Traefik, nunca por el puerto de un servicio, y cubren:
 
-- **Topología:** el panel muestra las cinco rutas activas, los puertos de los
-  servicios y de Mongo no están expuestos, una ruta o un host desconocidos dan `404`.
+- **Topología:** el panel muestra las seis rutas activas, los puertos de los
+  servicios, de Mongo y de Consul no están expuestos, una ruta o un host desconocidos
+  dan `404`, y Consul tiene líder y sirve su interfaz por `consul.localhost`.
 - **Cada servicio por su prefijo:** extractor (`200`, `400`, `422`, `413`), summarizer
   (`422` y, con IA, un resumen real), summaries (crear, listar, obtener, borrar) y
   exporter (el `.docx` con su contenido).
@@ -135,6 +146,7 @@ Las que necesitan la IA (`requires_ai`) se saltan si `summarizer` está degradad
 | `TRAEFIK_URL` | `http://localhost` | Dónde escucha Traefik |
 | `APP_HOST` | `pdf.localhost` | Cabecera `Host` de las peticiones |
 | `TRAEFIK_API_URL` | `http://localhost:8080` | API del panel de Traefik |
+| `CONSUL_HOST` | `consul.localhost` | Cabecera `Host` de las peticiones a Consul |
 
 ## CI
 
@@ -154,6 +166,7 @@ Ver `.env.example`.
 | `OPENROUTER_MODEL` | No | Por defecto `openrouter/free` |
 | `TAG` | No | Versión de las imágenes de ghcr. Por defecto `latest` |
 | `APP_HOST` | No | Dominio de Traefik. Por defecto `pdf.localhost` |
+| `CONSUL_HOST` | No | Dominio de la interfaz y la API de Consul. Por defecto `consul.localhost` |
 | `MAX_FILE_SIZE_MB` | No | Tamaño máximo por PDF. Por defecto `10` |
 
 ## Flujo de trabajo
