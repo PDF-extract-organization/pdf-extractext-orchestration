@@ -7,6 +7,7 @@
 #   ├── pdf-extractext-summarizer/
 #   ├── pdf-extractext-summaries/
 #   ├── pdf-extractext-exporter/
+#   ├── pdf-extractext-config/
 #   └── pdf-extractext-web/
 #
 # Uso:
@@ -28,6 +29,10 @@ services:
   exporter:
     build: ../pdf-extractext-exporter
     image: pdf-extractext-exporter:dev
+
+  config:
+    build: ../pdf-extractext-config
+    image: pdf-extractext-config:dev
 
   web:
     build: ../pdf-extractext-web
