@@ -123,6 +123,23 @@ services:
       - traefik.http.middlewares.exporter-strip.stripprefix.prefixes=/exporter
       - traefik.http.services.exporter.loadbalancer.server.port=8000
 
+  config:
+    <<: *service
+    image: ghcr.io/pdf-extract-organization/pdf-extractext-config:${TAG:-latest}
+    environment:
+      # Por la red interna, sin pasar por Traefik
+      CONSUL_HOST: consul
+    depends_on:
+      consul:
+        condition: service_healthy
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.config.rule=Host(`${APP_HOST:-pdf.localhost}`) && PathPrefix(`/config`)
+      - traefik.http.routers.config.entrypoints=web
+      - traefik.http.routers.config.middlewares=config-strip
+      - traefik.http.middlewares.config-strip.stripprefix.prefixes=/config
+      - traefik.http.services.config.loadbalancer.server.port=8000
+
   web:
     <<: *service
     image: ghcr.io/pdf-extract-organization/pdf-extractext-web:${TAG:-latest}
