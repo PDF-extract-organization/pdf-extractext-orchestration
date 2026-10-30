@@ -87,6 +87,9 @@ services:
       # La API key solo llega a este contenedor
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openrouter/free}
+      # Sus claves summarizer/* ganan a las variables de arriba en cada resumen.
+      # Sin depends_on a propósito: si config no está, se usan las de arriba.
+      CONFIG_URL: http://config:8000
     labels:
       - traefik.enable=true
       - traefik.http.routers.summarizer.rule=Host(`${APP_HOST:-pdf.localhost}`) && PathPrefix(`/summarizer`)
