@@ -164,3 +164,62 @@ def test_config_y_consul_comparten_el_mismo_kv(client, config_key):
 
     assert in_consul.status_code == 200
     assert in_consul.text == "desde config"
+
+
+# --- summarizer lee sus parámetros de config ---
+
+MAX_TOKENS_KEY = "summarizer/max_tokens"
+
+
+@pytest.fixture
+def max_tokens_en_config(client):
+    """Deja `summarizer/max_tokens` como estaba antes de la prueba (o sin crear)."""
+    before = client.get(f"/config/{MAX_TOKENS_KEY}")
+    client.delete(f"/config/{MAX_TOKENS_KEY}")
+    env_value = client.get("/summarizer/parameters").json()["max_tokens"]
+
+    def set_value(value: str) -> None:
+        if client.put(f"/config/{MAX_TOKENS_KEY}", json={"value": value}).status_code == 404:
+            client.post("/config/", json={"key": MAX_TOKENS_KEY, "value": value})
+
+    yield set_value, env_value
+
+    client.delete(f"/config/{MAX_TOKENS_KEY}")
+    if before.status_code == 200:
+        client.post("/config/", json={"key": MAX_TOKENS_KEY, "value": before.json()["value"]})
+
+
+def max_tokens_en_uso(client) -> int:
+    return client.get("/summarizer/parameters").json()["max_tokens"]
+
+
+def test_summarizer_llega_a_config(client):
+    assert client.get("/summarizer/parameters").json()["config_status"] == "ok"
+
+
+def test_summarizer_aplica_un_cambio_de_config_sin_reiniciar(client, max_tokens_en_config):
+    set_value, env_value = max_tokens_en_config
+
+    set_value("1234")
+    assert max_tokens_en_uso(client) == 1234
+
+    set_value("4321")
+    assert max_tokens_en_uso(client) == 4321
+
+    client.delete(f"/config/{MAX_TOKENS_KEY}")
+    assert max_tokens_en_uso(client) == env_value
+
+
+def test_summarizer_ignora_un_valor_invalido_de_config(client, max_tokens_en_config):
+    set_value, env_value = max_tokens_en_config
+
+    set_value("abc")
+
+    assert max_tokens_en_uso(client) == env_value
+
+
+def test_summarizer_no_expone_la_api_key(client):
+    response = client.get("/summarizer/parameters")
+
+    assert response.status_code == 200
+    assert not any("key" in name for name in response.json())

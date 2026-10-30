@@ -86,6 +86,24 @@ El contrato completo (errores `404`, `409`, `422`, `503` y el `index` para no pi
 cambios ajenos) está en el README de
 [pdf-extractext-config](https://github.com/PDF-extract-organization/pdf-extractext-config).
 
+**summarizer lee sus parámetros de config en cada resumen**, con su `.env` como
+respaldo. Un cambio vale en el siguiente resumen, sin reiniciar nada:
+
+| Clave | Sustituye a |
+|---|---|
+| `summarizer/model` | `OPENROUTER_MODEL` |
+| `summarizer/max_tokens` | `MAX_TOKENS` |
+| `summarizer/temperature` | `TEMPERATURE` |
+| `summarizer/max_prompt_chars` | `MAX_PROMPT_CHARS` |
+
+```bash
+curl http://pdf.localhost/summarizer/parameters   # los valores que usaría ahora
+```
+
+Un valor inválido se ignora. Si config no responde, summarizer usa su `.env` (tarda
+como mucho 2 s más en decidirlo) y `/summarizer/parameters` lo indica con
+`config_status: unavailable`. La API key nunca sale de config: solo del `.env`.
+
 Los navegadores y `curl` resuelven `*.localhost` a tu propia máquina sin configurar
 nada. Otros programas (por ejemplo Python en Windows) no: envíales la petición a
 `http://localhost` con la cabecera `Host: pdf.localhost`, que es lo que hacen las
@@ -157,6 +175,9 @@ En `e2e/`. Todas entran por Traefik, nunca por el puerto de un servicio, y cubre
   exporter (el `.docx` con su contenido) y config (crear, leer, listar, actualizar, `409`
   con un índice viejo, borrar, y que lo escrito se vea en la API de Consul). Las claves
   de prueba viven bajo `e2e/` y se borran al terminar.
+- **summarizer lee de config:** un cambio en `summarizer/max_tokens` se ve en
+  `/summarizer/parameters` sin reiniciar, al borrarlo vuelve el del `.env`, y un valor
+  inválido se ignora. La prueba deja la clave como estaba.
 - **web:** la portada con su CSS e imágenes, `/api/health`, errores que llegan al
   usuario, historial, exportación y borrado; y, con IA, el ciclo completo subir PDF →
   resumen → guardado → descarga → borrado.
