@@ -9,7 +9,7 @@ from e2e.conftest import CONSUL_HOST, TRAEFIK_API_URL
 
 pytestmark = pytest.mark.integration
 
-ROUTERS = {"extractor", "summarizer", "summaries", "exporter", "web", "consul"}
+ROUTERS = {"extractor", "summarizer", "summaries", "exporter", "config", "web", "consul"}
 
 
 def test_el_panel_de_traefik_muestra_todas_las_rutas_activas(client):
