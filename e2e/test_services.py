@@ -2,12 +2,16 @@
 
 import pytest
 
-from e2e.conftest import PDF_TEXT, build_pdf, docx_paragraphs
+from uuid import uuid4
+
+from e2e.conftest import CONSUL_HOST, PDF_TEXT, build_pdf, docx_paragraphs
 
 pytestmark = pytest.mark.integration
 
 
-@pytest.mark.parametrize("service", ["extractor", "summarizer", "summaries", "exporter"])
+@pytest.mark.parametrize(
+    "service", ["extractor", "summarizer", "summaries", "exporter", "config"]
+)
 def test_cada_servicio_responde_en_su_prefijo(client, service):
     response = client.get(f"/{service}/health")
 
@@ -105,3 +109,58 @@ def test_exporter_devuelve_un_docx_con_el_markdown(client):
         ("Heading 2", "Hola"),
         ("List Bullet", "uno"),
     ]
+
+
+# --- config ---
+
+
+@pytest.fixture
+def config_key(client):
+    """Una clave propia de la prueba, bajo e2e/, que se borra al terminar."""
+    key = f"e2e/clave-{uuid4().hex[:12]}"
+    yield key
+    client.delete(f"/config/{key}")
+
+
+def test_config_ciclo_completo_crear_leer_listar_actualizar_borrar(client, config_key):
+    created = client.post("/config/", json={"key": config_key, "value": "5000"})
+    assert created.status_code == 201
+    index = created.json()["index"]
+
+    assert client.get(f"/config/{config_key}").json()["value"] == "5000"
+    listed = client.get("/config/", params={"prefix": "e2e/"}).json()["entries"]
+    assert config_key in [e["key"] for e in listed]
+
+    updated = client.put(f"/config/{config_key}", json={"value": "6000", "index": index})
+    assert updated.status_code == 200
+    assert updated.json()["value"] == "6000"
+
+    # Con el índice ya usado, otro cambio entre medio: no pisa
+    stale = client.put(f"/config/{config_key}", json={"value": "7000", "index": index})
+    assert stale.status_code == 409
+    assert client.get(f"/config/{config_key}").json()["value"] == "6000"
+
+    assert client.delete(f"/config/{config_key}").status_code == 204
+    assert client.get(f"/config/{config_key}").status_code == 404
+
+
+def test_config_no_crea_dos_veces_la_misma_clave(client, config_key):
+    client.post("/config/", json={"key": config_key, "value": "a"})
+
+    assert client.post("/config/", json={"key": config_key, "value": "b"}).status_code == 409
+
+
+def test_config_rechaza_claves_invalidas(client):
+    assert client.post("/config/", json={"key": "health", "value": "x"}).status_code == 422
+
+
+def test_config_y_consul_comparten_el_mismo_kv(client, config_key):
+    client.post("/config/", json={"key": config_key, "value": "desde config"})
+
+    # La API de Consul por su host en Traefik: la clave vive bajo el prefijo del servicio
+    in_consul = client.get(
+        f"/v1/kv/pdf-extractext/{config_key}", params={"raw": ""}, headers={"Host": CONSUL_HOST}
+    )
+
+    assert in_consul.status_code == 200
+    assert in_consul.text == "desde config"

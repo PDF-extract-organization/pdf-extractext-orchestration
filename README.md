@@ -2,7 +2,7 @@
 
 Orquestación de [pdf-extractext](https://github.com/PDF-extract-organization/pdf-extractext)
 dividido en microservicios (épica: pdf-extractext#64): el `docker-compose` con Traefik
-delante de los cinco servicios y de Consul, y las pruebas de extremo a extremo que entran
+delante de los seis servicios y de Consul, y las pruebas de extremo a extremo que entran
 por Traefik.
 
 Aquí no hay código de ningún servicio: cada uno vive en su repositorio.
@@ -10,15 +10,16 @@ Aquí no hay código de ningún servicio: cada uno vive en su repositorio.
 ## Arquitectura
 
 ```
-                       http://pdf.localhost                    http://consul.localhost
-                               │                                         │
-                           Traefik :80          (panel en :8080) ────────┤
-         ┌──────────┬──────────┼──────────┬───────────────┐              │
-   /extractor  /summarizer  /summaries  /exporter   / y /api (el resto)  │
-         │          │          │          │               │              │
-     extractor  summarizer  summaries  exporter          web ──► los cuatro
-                    │          │                                       Consul
-                OpenRouter   MongoDB                               (KV de configuración)
+                            http://pdf.localhost                          http://consul.localhost
+                                    │                                               │
+                                Traefik :80          (panel en :8080) ──────────────┤
+         ┌──────────┬──────────┬────┴─────┬──────────┬───────────────┐              │
+   /extractor  /summarizer  /summaries  /exporter   /config   / y /api (el resto)   │
+         │          │          │          │          │               │              │
+     extractor  summarizer  summaries  exporter    config           web ──► los cuatro
+                    │          │                     │                              │
+                OpenRouter   MongoDB                 └──────────────────────────► Consul
+                                                                            (KV de configuración)
 ```
 
 | Servicio | Repositorio | Ruta en Traefik | Qué hace |
@@ -28,12 +29,18 @@ Aquí no hay código de ningún servicio: cada uno vive en su repositorio.
 | summarizer | [pdf-extractext-summarizer](https://github.com/PDF-extract-organization/pdf-extractext-summarizer) | `/summarizer` | Texto → resumen con IA |
 | summaries | [pdf-extractext-summaries](https://github.com/PDF-extract-organization/pdf-extractext-summaries) | `/summaries` | Historial en MongoDB |
 | exporter | [pdf-extractext-exporter](https://github.com/PDF-extract-organization/pdf-extractext-exporter) | `/exporter` | Markdown → `.docx` |
+| config | [pdf-extractext-config](https://github.com/PDF-extract-organization/pdf-extractext-config) | `/config` | CRUD sobre el KV de Consul con `py-consul` |
 | consul | imagen oficial `hashicorp/consul` | host `consul.localhost` | Configuración centralizada en su KV (épica: pdf-extractext#74) |
 
 Consul es un único servidor (`-server -bootstrap-expect=1`) que se elige líder a sí
 mismo: sin líder, el KV no responde. Va por host y no por prefijo porque su interfaz pide
 rutas absolutas (`/ui`, `/v1`). Los servicios le hablan por la red interna
 (`http://consul:8500`).
+
+`config` es el único servicio que escribe en Consul. Guarda las claves bajo el prefijo
+`pdf-extractext/`, así que lo que crea en `/config/summarizer/max_tokens` aparece en la
+interfaz de Consul como `pdf-extractext/summarizer/max_tokens`. Arranca después de que
+Consul tenga líder.
 
 Traefik quita el prefijo antes de reenviar (`/extractor/health` llega al servicio como
 `/health`), así que ningún servicio sabe que existe Traefik. Las reglas viven en las
@@ -58,9 +65,26 @@ docker compose up -d --wait
 |---|---|
 | http://pdf.localhost | La aplicación |
 | http://pdf.localhost/api/health | Estado de los cuatro servicios |
-| http://pdf.localhost/extractor/health (y `/summarizer`, `/summaries`, `/exporter`) | Cada servicio por su prefijo |
+| http://pdf.localhost/extractor/health (y `/summarizer`, `/summaries`, `/exporter`, `/config`) | Cada servicio por su prefijo |
+| http://pdf.localhost/config/ | La configuración guardada en Consul |
 | http://localhost:8080 | Panel de Traefik con las rutas detectadas |
 | http://consul.localhost | Interfaz de Consul (Key/Value para ver y editar la configuración) |
+
+### Configuración centralizada
+
+```bash
+# Crear, leer, cambiar y borrar una clave (<servicio>/<nombre>)
+curl -H "Content-Type: application/json" \
+  -d '{"key": "summarizer/max_tokens", "value": "5000"}' http://pdf.localhost/config/
+curl http://pdf.localhost/config/summarizer/max_tokens
+curl -X PUT -H "Content-Type: application/json" \
+  -d '{"value": "6000"}' http://pdf.localhost/config/summarizer/max_tokens
+curl -X DELETE http://pdf.localhost/config/summarizer/max_tokens
+```
+
+El contrato completo (errores `404`, `409`, `422`, `503` y el `index` para no pisar
+cambios ajenos) está en el README de
+[pdf-extractext-config](https://github.com/PDF-extract-organization/pdf-extractext-config).
 
 Los navegadores y `curl` resuelven `*.localhost` a tu propia máquina sin configurar
 nada. Otros programas (por ejemplo Python en Windows) no: envíales la petición a
@@ -76,7 +100,7 @@ exportación y el borrado funcionan igual.
 ### Desarrollo: construir desde los repositorios
 
 Mientras las imágenes no estén publicadas en ghcr (la CI de cada servicio las publica
-al integrar en `main`), o para probar cambios locales, clona los seis repositorios uno
+al integrar en `main`), o para probar cambios locales, clona los siete repositorios uno
 al lado del otro:
 
 ```
@@ -86,6 +110,7 @@ ProyectoDesarrollo/
 ├── pdf-extractext-summarizer/
 ├── pdf-extractext-summaries/
 ├── pdf-extractext-exporter/
+├── pdf-extractext-config/
 └── pdf-extractext-web/
 ```
 
@@ -117,17 +142,21 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build -
 - **Consul** va sin ACL: cualquiera que llegue a `consul.localhost` puede leer y cambiar
   el KV. Solo para desarrollo. Por eso **el KV no guarda secretos**: las API keys siguen
   en el `.env` o en el navegador de cada usuario.
+- **`/config`** tampoco tiene autenticación: cualquiera que llegue a `pdf.localhost` puede
+  cambiar la configuración. Solo para desarrollo, igual que la interfaz de Consul.
 
 ## Pruebas de extremo a extremo
 
 En `e2e/`. Todas entran por Traefik, nunca por el puerto de un servicio, y cubren:
 
-- **Topología:** el panel muestra las seis rutas activas, los puertos de los
+- **Topología:** el panel muestra las siete rutas activas, los puertos de los
   servicios, de Mongo y de Consul no están expuestos, una ruta o un host desconocidos
   dan `404`, y Consul tiene líder y sirve su interfaz por `consul.localhost`.
 - **Cada servicio por su prefijo:** extractor (`200`, `400`, `422`, `413`), summarizer
-  (`422` y, con IA, un resumen real), summaries (crear, listar, obtener, borrar) y
-  exporter (el `.docx` con su contenido).
+  (`422` y, con IA, un resumen real), summaries (crear, listar, obtener, borrar),
+  exporter (el `.docx` con su contenido) y config (crear, leer, listar, actualizar, `409`
+  con un índice viejo, borrar, y que lo escrito se vea en la API de Consul). Las claves
+  de prueba viven bajo `e2e/` y se borran al terminar.
 - **web:** la portada con su CSS e imágenes, `/api/health`, errores que llegan al
   usuario, historial, exportación y borrado; y, con IA, el ciclo completo subir PDF →
   resumen → guardado → descarga → borrado.
