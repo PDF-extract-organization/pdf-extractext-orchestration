@@ -1,4 +1,4 @@
-# Stack completo de pdf-extractext: Traefik delante de los cinco microservicios.
+# Stack completo de pdf-extractext: Traefik delante de los cinco microservicios y de Consul.
 #
 # Solo Traefik publica puertos al host. Todo se prueba entrando por http://pdf.localhost.
 # Las imágenes salen de ghcr (las publica la CI de cada repositorio al integrar en main).
@@ -44,6 +44,28 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+
+  consul:
+    <<: *service
+    image: hashicorp/consul:2.1
+    # Un único servidor que se elige líder a sí mismo: sin líder el KV no responde.
+    # -client=0.0.0.0 para que la API escuche en la red de Docker, no solo dentro del contenedor.
+    command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0
+    volumes:
+      - consul_data:/consul/data
+    healthcheck:
+      # Sano solo con líder elegido: sin él, /v1/status/leader devuelve ""
+      test: ["CMD-SHELL", "curl -fs http://127.0.0.1:8500/v1/status/leader | grep -q 8300"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    labels:
+      - traefik.enable=true
+      # Por host y no por prefijo: la interfaz de Consul pide rutas absolutas (/ui, /v1)
+      - traefik.http.routers.consul.rule=Host(`${CONSUL_HOST:-consul.localhost}`)
+      - traefik.http.routers.consul.entrypoints=web
+      - traefik.http.services.consul.loadbalancer.server.port=8500
 
   extractor:
     <<: *service
@@ -129,6 +151,7 @@ services:
 
 volumes:
   mongo_data:
+  consul_data:
 
 networks:
   pdf-extractext:
