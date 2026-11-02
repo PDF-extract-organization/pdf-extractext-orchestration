@@ -55,7 +55,7 @@ sin pasar por Traefik.
 Requisitos: Docker con Compose v2.
 
 ```bash
-cp .env.example .env              # y rellena MONGO_ROOT_PASSWORD y, si la tienes, OPENROUTER_API_KEY
+cp .env.example .env              # rellena MONGO_ROOT_PASSWORD; OPENROUTER_API_KEY es opcional (ver abajo)
 docker compose up -d --wait
 ```
 
@@ -64,6 +64,7 @@ docker compose up -d --wait
 | URL | Qué es |
 |---|---|
 | http://pdf.localhost | La aplicación |
+| http://pdf.localhost/ajustes | Ajustes del usuario: modelo, API key y máximo de tokens (también desde el botón ⚙️) |
 | http://pdf.localhost/api/health | Estado de los cuatro servicios |
 | http://pdf.localhost/extractor/health (y `/summarizer`, `/summaries`, `/exporter`, `/config`) | Cada servicio por su prefijo |
 | http://pdf.localhost/config/ | La configuración guardada en Consul |
@@ -102,18 +103,41 @@ curl http://pdf.localhost/summarizer/parameters   # los valores que usaría ahor
 
 Un valor inválido se ignora. Si config no responde, summarizer usa su `.env` (tarda
 como mucho 2 s más en decidirlo) y `/summarizer/parameters` lo indica con
-`config_status: unavailable`. La API key nunca sale de config: solo del `.env`.
+`config_status: unavailable`. La API key nunca sale de config: solo del `.env` o de los
+ajustes del usuario.
+
+### Valores de cada resumen
+
+Cada valor se resuelve en tres niveles; gana el primero que exista:
+
+```
+1. Ajustes del usuario   (página Ajustes, guardados en su navegador)  modelo, API key, máximo de tokens
+2. Configuración central (Consul, a través de config)                 modelo, tokens, temperatura, truncado
+3. .env de summarizer                                                  todo, incluida la API key del servidor
+```
+
+Los ajustes del usuario viajan con cada resumen y no se guardan en el servidor. La
+página Ajustes muestra los valores del servidor pero **nunca los cambia**: eso se hace
+con `/config` o con la interfaz de Consul.
 
 Los navegadores y `curl` resuelven `*.localhost` a tu propia máquina sin configurar
 nada. Otros programas (por ejemplo Python en Windows) no: envíales la petición a
 `http://localhost` con la cabecera `Host: pdf.localhost`, que es lo que hacen las
 pruebas.
 
-### Sin clave de OpenRouter
+### La API key de OpenRouter
 
-Todo funciona salvo generar resúmenes: `/api/health` marca `summarizer` como degradado
-y subir un PDF responde `503` explicando que falta la clave. El historial, la
-exportación y el borrado funcionan igual.
+Hay dos formas de darla, y se pueden combinar:
+
+- **En el `.env`** (`OPENROUTER_API_KEY`): es la clave del servidor, la que se usa
+  cuando el usuario no pone la suya.
+- **Desde la interfaz**: botón ⚙️ → *Añadir modelo*, con un nombre, el modelo de
+  OpenRouter y la API key. Se guarda solo en ese navegador y viaja con cada resumen.
+
+Sin clave en el `.env`, todo funciona y quien añada la suya en Ajustes puede generar
+resúmenes. Quien no la añada recibe un `503` que explica las dos formas de darla.
+`/api/health` marca `summarizer` como degradado, porque solo mira la clave del
+servidor. El historial, la exportación y el borrado funcionan igual.
 
 ### Desarrollo: construir desde los repositorios
 
@@ -203,7 +227,8 @@ Las que necesitan la IA (`requires_ai`) se saltan si `summarizer` está degradad
 - En cada pull request: comprueba que el `docker-compose` es válido.
 - A mano (`workflow_dispatch`): levanta el stack con las imágenes de ghcr y ejecuta las
   pruebas de extremo a extremo. Si el secreto `OPENROUTER_API_KEY` está configurado en
-  el repositorio, incluye las que usan la IA.
+  el repositorio, incluye las que usan la IA. Las pruebas no usan la clave de un
+  usuario: solo la del servidor.
 
 ## Configuración
 
@@ -212,8 +237,8 @@ Ver `.env.example`.
 | Variable | Obligatoria | Uso |
 |---|---|---|
 | `MONGO_ROOT_USERNAME`, `MONGO_ROOT_PASSWORD` | Sí | Credenciales de MongoDB. La contraseña va dentro de una URL: evita `@ : / ? # %` y los caracteres no ASCII |
-| `OPENROUTER_API_KEY` | Sí | Sin ella no se generan resúmenes |
-| `OPENROUTER_MODEL` | No | Por defecto `openrouter/free` |
+| `OPENROUTER_API_KEY` | No | Clave del servidor, la que se usa cuando el usuario no añade la suya en Ajustes. Sin ninguna de las dos no se generan resúmenes |
+| `OPENROUTER_MODEL` | No | Modelo por defecto si Consul no tiene `summarizer/model`. Por defecto `openrouter/free` |
 | `TAG` | No | Versión de las imágenes de ghcr. Por defecto `latest` |
 | `APP_HOST` | No | Dominio de Traefik. Por defecto `pdf.localhost` |
 | `CONSUL_HOST` | No | Dominio de la interfaz y la API de Consul. Por defecto `consul.localhost` |
