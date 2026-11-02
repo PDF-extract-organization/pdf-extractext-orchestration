@@ -205,6 +205,14 @@ En `e2e/`. Todas entran por Traefik, nunca por el puerto de un servicio, y cubre
 - **web:** la portada con su CSS e imágenes, `/api/health`, errores que llegan al
   usuario, historial, exportación y borrado; y, con IA, el ciclo completo subir PDF →
   resumen → guardado → descarga → borrado.
+- **Ajustes** (`e2e/test_ajustes.py`): el botón ⚙️ de la portada lleva a `/ajustes`, la
+  página pide la clave como contraseña y comparte con la portada dónde guarda los
+  ajustes; los valores por defecto coinciden con `/summarizer/parameters`. Ajustes
+  inválidos (tokens por encima del tope o mal escritos, una API key inventada) dan
+  `400`, `422` y `401` **sin devolver la clave ni guardar nada** en el historial. Con
+  IA: pocos tokens nunca dan un resumen por completo (`truncated: true` o un `502` que
+  lo explica), y con los ajustes del usuario llega completo. Los resúmenes que crean
+  las pruebas se borran.
 
 ```bash
 docker compose up -d --wait       # o con docker-compose.build.yml
